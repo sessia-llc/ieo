@@ -1,0 +1,21 @@
+{
+  "name": "sample-crowdsale-starter",
+  "version": "1.0.0",
+  "description": "Empty sample starter truffle project for using zeppelin solidity for a crowdsale",
+  "directories": {
+    "test": "test"
+  },
+  "scripts": {
+    "console": "./node_modules/.bin/truffle develop",
+    "test": "./node_modules/.bin/truffle test"
+  },
+  "author": "Santiago Palladino <santiago@zeppelin.solutions>",
+  "license": "MIT",
+  "dependencies": {
+    "openzeppelin-solidity": "2.1.2",
+    "openzeppelin-test-helpers": "^0.1.2",
+    "truffle": "^5.0.5",
+    "truffle-hdwallet-provider": "^1.0.3",
+    "web3": "^1.0.0-beta.46"
+  }
+}
