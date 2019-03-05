@@ -1,2 +1,3 @@
-# ICO
-ICO Contract
+# ICO Sessia Contract
+
+https://sessia.com/blockchain.html
