@@ -9,26 +9,23 @@ contract KicksCrowdsale is Crowdsale, TimedCrowdsale, AllowanceCrowdsale {
 
     using SafeMath for uint256;
 
-    uint256 private _kickCap = 33333333 ether;
+    uint256 private _rate;
+
+    uint256 private _kickCap = 33333333333333333333333333; // $50M
     uint256 private _kickMinPay = 100 ether;
     uint256 private _kickPurchased = 0;
 
-    uint256 private _rateEthUsd = 135.54 ether;
-    uint256 private _rateUsdEth = 0.007386 ether;
-    uint256 private _rateKickUsd = 1.5 ether;
-    uint256 private _rateUsdKick = 0.666667 ether;
-
-    uint256 private _bonus20capBoundary =  666666 ether;
-    uint256 private _bonus10capBoundary = 1333333 ether;
+    uint256 private _bonus20capBoundary = 666666666666666666666667; // $1M
+    uint256 private _bonus10capBoundary = 1333333333333333333333333; // $2M
 
     address private _manualSeller;
     address private _rateSetter;
 
     event Bonus(address indexed purchaser, address indexed beneficiary, uint256 value, uint256 amount);
-    event ChangeRate(uint256 ethUsd, uint256 usdEth);
+    event ChangeRate(uint256 rate);
 
     constructor(
-        uint256 rate, // not used, calculated based on _rateEthUsd
+        uint256 rate, // eth to kick rate
         ERC20 token, // the kick token address
         address payable wallet, // accumulation eth address
         address tokenWallet, // kick storage address
@@ -42,28 +39,9 @@ contract KicksCrowdsale is Crowdsale, TimedCrowdsale, AllowanceCrowdsale {
     TimedCrowdsale(openingTime, closingTime)
     public
     {
+        _rate = rate;
         _manualSeller = manualSeller;
         _rateSetter = rateSetter;
-    }
-
-
-    /**
-     * Conversion rates
-     */
-    function _ethToUsd(uint256 eth) internal view returns (uint256) {
-        return eth.mul(_rateEthUsd).div(1 ether);
-    }
-
-    function _ethToKick(uint256 eth) internal view returns (uint256) {
-        return _usdToKick(_ethToUsd(eth));
-    }
-
-    function _usdToEth(uint256 usd) internal view returns (uint256) {
-        return usd.mul(_rateUsdEth).div(1 ether);
-    }
-
-    function _usdToKick(uint256 usd) internal view returns (uint256) {
-        return usd.mul(_rateUsdKick).div(1 ether);
     }
 
 
@@ -71,7 +49,7 @@ contract KicksCrowdsale is Crowdsale, TimedCrowdsale, AllowanceCrowdsale {
      * Base crowdsale override
      */
     function _preValidatePurchase(address beneficiary, uint256 weiAmount) internal view {
-        uint256 kickAmount = _ethToKick(weiAmount);
+        uint256 kickAmount = weiAmount.mul(_rate);
         require(kickAmount >= _kickMinPay, 'Min purchase 100 kick');
         require(_kickPurchased.add(kickAmount) <= _kickCap, 'Cap has been reached');
         super._preValidatePurchase(beneficiary, weiAmount);
@@ -79,22 +57,23 @@ contract KicksCrowdsale is Crowdsale, TimedCrowdsale, AllowanceCrowdsale {
 
     function calcBonus(uint256 tokenAmount) internal view returns (uint256) {
         uint256 bonus = 0;
-        if (_kickPurchased < _bonus20capBoundary) {
+        if (_kickPurchased.add(tokenAmount) <= _bonus20capBoundary) {
             bonus = tokenAmount.mul(20).div(100);
-        } else if (_kickPurchased < _bonus10capBoundary) {
+        } else if (_kickPurchased.add(tokenAmount) <= _bonus10capBoundary) {
             bonus = tokenAmount.mul(10).div(100);
         }
         return bonus;
     }
 
     function _getTokenAmount(uint256 weiAmount) internal view returns (uint256) {
-        uint256 tokenAmount = _ethToKick(weiAmount);
-        return tokenAmount.add(calcBonus(tokenAmount));
+        uint256 tokenAmount = weiAmount.mul(_rate);
+        return weiAmount.mul(_rate).add(calcBonus(tokenAmount));
     }
 
     function _updatePurchasingState(address beneficiary, uint256 weiAmount) internal {
-        _kickPurchased = _kickPurchased.add(_ethToKick(weiAmount));
-        uint256 bonus = calcBonus(_getTokenAmount(weiAmount));
+        uint256 tokenAmount = _getTokenAmount(weiAmount);
+        _kickPurchased = _kickPurchased.add(tokenAmount);
+        uint256 bonus = calcBonus(tokenAmount);
         if (bonus != 0) {
             emit Bonus(msg.sender, beneficiary, weiAmount, bonus);
         }
@@ -104,31 +83,34 @@ contract KicksCrowdsale is Crowdsale, TimedCrowdsale, AllowanceCrowdsale {
     /**
      * Manual sell
      */
-    function manualSell(address beneficiary, uint256 usd) public onlyWhileOpen {
+    function manualSell(address beneficiary, uint256 weiAmount) public onlyWhileOpen {
         require(msg.sender == _manualSeller);
-        uint256 weiAmount = _usdToEth(usd);
-        uint256 tokenAmount = _getTokenAmount(weiAmount);
         _preValidatePurchase(beneficiary, weiAmount);
-        _processPurchase(beneficiary, tokenAmount);
-        emit TokensPurchased(msg.sender, beneficiary, weiAmount, tokenAmount);
+        uint256 tokens = _getTokenAmount(weiAmount);
+        _processPurchase(beneficiary, tokens);
+        emit TokensPurchased(msg.sender, beneficiary, weiAmount, tokens);
         _updatePurchasingState(beneficiary, weiAmount);
+        _postValidatePurchase(beneficiary, weiAmount);
     }
 
 
     /**
      * Change eth rate
      */
-    function setRateEthUsd(uint256 ethUsd, uint256 usdEth) public {
+    function setRate(uint256 rate) public {
         require(msg.sender == _rateSetter);
-        _rateEthUsd = ethUsd;
-        _rateUsdEth = usdEth;
-        emit ChangeRate(ethUsd, usdEth);
+        _rate = rate;
+        emit ChangeRate(rate);
     }
 
 
     /**
      * Getters
      */
+    function rate() public view returns (uint256) {
+        return _rate;
+    }
+
     function kickCap() public view returns (uint256) {
         return _kickCap;
     }
@@ -139,22 +121,6 @@ contract KicksCrowdsale is Crowdsale, TimedCrowdsale, AllowanceCrowdsale {
 
     function kickPurchased() public view returns (uint256) {
         return _kickPurchased;
-    }
-
-    function rateEthUsd() public view returns (uint256) {
-        return _rateEthUsd;
-    }
-
-    function rateUsdEth() public view returns (uint256) {
-        return _rateUsdEth;
-    }
-
-    function rateKickUsd() public view returns (uint256) {
-        return _rateKickUsd;
-    }
-
-    function rateUsdKick() public view returns (uint256) {
-        return _rateUsdKick;
     }
 
     function bonus20capBoundary() public view returns (uint256) {

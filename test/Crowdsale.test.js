@@ -3,12 +3,14 @@ const {BN, balance, ether, should, shouldFail, time} = require('openzeppelin-tes
 const KicksCrowdsale = artifacts.require('KicksCrowdsale');
 const KicksToken = artifacts.require('KicksToken');
 
-contract('KicksCrowdsale', function ([deployer, founder, manualSeller, rateSetter, investor, investor2]) {
+contract('KicksCrowdsale', function ([deployer, founder, manualSeller, rateSetter, investor, investor2, investor3]) {
 
-    let kickCap, kickMinPay, kickPurchased,
-        rateEthUsd, rateUsdEth, rateKickUsd, rateUsdKick,
-        bonus20capBoundary, bonus10capBoundary;
-
+    let rate = new BN('93');
+    let kickCap = new BN('33333333333333333333333333');
+    let kickMinPay = ether('100');
+    let kickPurchased = new BN('0');
+    let bonus20capBoundary = new BN('666666666666666666666667');
+    let bonus10capBoundary = new BN('1333333333333333333333333');
 
     before(async function () {
         // Advance to the next block to correctly read time in the solidity "now" function interpreted by ganache
@@ -23,7 +25,7 @@ contract('KicksCrowdsale', function ([deployer, founder, manualSeller, rateSette
 
         this.token = await KicksToken.new(founder, {from: founder});
         this.crowdsale = await KicksCrowdsale.new(
-            new BN(1), // not used, calculated based on _rateEthUsd
+            rate, // eth to kick rate
             this.token.address, // the kick token address
             founder, // accumulation eth address
             founder, // kick storage address
@@ -33,16 +35,6 @@ contract('KicksCrowdsale', function ([deployer, founder, manualSeller, rateSette
             this.closingTime, // crowdsale closing time
             {from: deployer}
         );
-
-        kickCap = await this.crowdsale.kickCap(); // 50M in usd
-        kickMinPay = await this.crowdsale.kickMinPay();
-        kickPurchased = await this.crowdsale.kickPurchased();
-        rateEthUsd = await this.crowdsale.rateEthUsd();
-        rateUsdEth = await this.crowdsale.rateUsdEth();
-        rateKickUsd = await this.crowdsale.rateKickUsd();
-        rateUsdKick = await this.crowdsale.rateUsdKick();
-        bonus20capBoundary = await this.crowdsale.bonus20capBoundary();
-        bonus10capBoundary = await this.crowdsale.bonus10capBoundary();
 
         this.token.approve(this.crowdsale.address, kickCap, {from: founder});
     });
@@ -64,12 +56,10 @@ contract('KicksCrowdsale', function ([deployer, founder, manualSeller, rateSette
         await shouldFail.reverting(this.crowdsale.buyTokens(investor, {value: ether('1'), from: investor}));
     });
 
-
     it('Buy', async function () {
         await time.increaseTo(this.openingTime);
         let eth = ether('100');
-        let usd = eth.mul(rateEthUsd).div(ether('1'));
-        let kick = usd.mul(rateUsdKick).div(ether('1'));
+        let kick = eth.mul(rate);
         let bonus = kick.mul(new BN('20')).div(new BN('100'));
         await this.crowdsale.buyTokens(investor, {value: eth, from: investor});
         (await this.token.balanceOf(investor)).should.be.bignumber.equal(kick.add(bonus));
@@ -84,20 +74,28 @@ contract('KicksCrowdsale', function ([deployer, founder, manualSeller, rateSette
 
     it('Cap has been reached', async function () {
         await time.increaseTo(this.openingTime);
-        let kick = kickCap.add(new BN('1'));
-        let usd = kick.mul(rateKickUsd).div(ether('1'));
-        let eth = usd.mul(rateUsdEth).div(ether('1'));
-        await shouldFail.reverting(this.crowdsale.buyTokens(investor, {value: eth, from: investor}));
+        await shouldFail.reverting(this.crowdsale.buyTokens(investor, {value: ether('500000'), from: investor}));
     });
 
 
     it('Cap increment', async function () {
         await time.increaseTo(this.openingTime);
+
         let eth1 = ether('100');
-        let kick1 = eth1.mul(rateEthUsd).div(ether('1'));
-        let bonus1 = kick1.mul(new BN('20')).div(new BN('100'));
         await this.crowdsale.buyTokens(investor, {value: eth1, from: investor});
-        (await this.crowdsale.kickPurchased()).should.be.bignumber.equal(kick1.add(bonus1));
+
+        let eth2 = ether('100');
+        await this.crowdsale.buyTokens(investor2, {value: eth2, from: investor2});
+
+        let kick1 = eth1.mul(rate);
+        let bonus1 = kick1.mul(new BN('20')).div(new BN('100'));
+        let sum1 = kick1.add(bonus1);
+
+        let kick2 = eth2.mul(rate);
+        let bonus2 = kick2.mul(new BN('20')).div(new BN('100'));
+        let sum2 = kick2.add(bonus2);
+
+        (await this.crowdsale.kickPurchased()).should.be.bignumber.equal(sum1.add(sum2));
     });
 
 
@@ -111,14 +109,13 @@ contract('KicksCrowdsale', function ([deployer, founder, manualSeller, rateSette
             this.crowdsale.manualSell(investor, ether('1000'), {from: investor})
         );
         await shouldFail.reverting(
-            this.crowdsale.manualSell(investor, ether('100'), {from: manualSeller})
+            this.crowdsale.manualSell(investor, ether('1'), {from: manualSeller})
         );
 
-        let eth = ether('1000');
-        let usd = eth.mul(rateEthUsd).div(ether('1'));
-        let kick = usd.mul(rateUsdKick).div(ether('1'));
+        let eth = ether('100');
+        let kick = eth.mul(rate);
         let bonus = kick.mul(new BN('20')).div(new BN('100'));
-        await this.crowdsale.manualSell(investor, usd, {from: manualSeller});
+        await this.crowdsale.manualSell(investor, eth, {from: manualSeller});
         (await this.token.balanceOf(investor)).should.be.bignumber.equal(kick.add(bonus));
     });
 
@@ -127,18 +124,22 @@ contract('KicksCrowdsale', function ([deployer, founder, manualSeller, rateSette
         await time.increaseTo(this.openingTime);
 
         let eth20 = ether('100');
-        let usd20 = eth20.mul(rateEthUsd).div(ether('1'));
-        let token20 = usd20.mul(rateUsdKick).div(ether('1'));
-        let bonus20 = token20.mul(new BN('20')).div(new BN('100'));
-        await this.crowdsale.buyTokens(investor, {value: eth20, from: investor});
-        (await this.token.balanceOf(investor)).should.be.bignumber.equal(token20.add(bonus20));
+        let kick20 = eth20.mul(rate);
+        let bonus20 = kick20.mul(new BN('20')).div(new BN('100'));
 
-        let token10 = bonus20capBoundary;
-        let usd10 = token10.mul(rateKickUsd).div(ether('1'));
-        let eth10 = usd10.mul(rateUsdEth).div(ether('1'));
-        let bonus10 = token10.mul(new BN('20')).div(new BN('100'));
+        await this.crowdsale.buyTokens(investor, {value: eth20, from: investor});
+        (await this.token.balanceOf(investor)).should.be.bignumber.equal(kick20.add(bonus20));
+
+        let eth10 = ether('10907'); // ~ $1.5M
+        let kick10 = eth10.mul(rate);
+        let bonus10 = kick10.mul(new BN('10')).div(new BN('100'));
         await this.crowdsale.buyTokens(investor2, {value: eth10, from: investor2});
-        (await this.token.balanceOf(investor2)).should.be.bignumber.equal(token10.add(bonus10));
+        (await this.token.balanceOf(investor2)).should.be.bignumber.equal(kick10.add(bonus10));
+
+        let eth0 = ether('21813'); // ~ $3M
+        let kick0 = eth0.mul(rate);
+        await this.crowdsale.buyTokens(investor3, {value: eth0, from: investor3});
+        (await this.token.balanceOf(investor3)).should.be.bignumber.equal(kick0);
     });
 
 
@@ -150,5 +151,4 @@ contract('KicksCrowdsale', function ([deployer, founder, manualSeller, rateSette
             await crowdsale.buyTokens(investor, {value: eth, from: investor});
         })).should.be.bignumber.equal(eth);
     });
-
 });
