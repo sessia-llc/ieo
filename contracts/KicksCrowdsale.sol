@@ -2,10 +2,11 @@ pragma solidity ^0.5.0;
 
 import "openzeppelin-solidity/contracts/crowdsale/emission/AllowanceCrowdsale.sol";
 import "openzeppelin-solidity/contracts/crowdsale/validation/TimedCrowdsale.sol";
+import "openzeppelin-solidity/contracts/access/roles/WhitelistedRole.sol";
 import "openzeppelin-solidity/contracts/crowdsale/Crowdsale.sol";
 import "openzeppelin-solidity/contracts/token/ERC20/ERC20.sol";
 
-contract KicksCrowdsale is Crowdsale, TimedCrowdsale, AllowanceCrowdsale {
+contract KicksCrowdsale is Crowdsale, TimedCrowdsale, AllowanceCrowdsale, WhitelistedRole {
 
     using SafeMath for uint256;
 
@@ -15,11 +16,14 @@ contract KicksCrowdsale is Crowdsale, TimedCrowdsale, AllowanceCrowdsale {
     uint256 private _kickMinPay = 100 ether;
     uint256 private _kickPurchased = 0;
 
-    uint256 private _bonus20capBoundary = 666666666666666666666667; // $1M
-    uint256 private _bonus10capBoundary = 1333333333333333333333333; // $2M
+    uint256 private _bonus20capBoundary = 800000000000000000000000; // $1.2M
+    uint256 private _bonus10capBoundary = 1533333333333333333333333; // $2.3M
 
     address private _manualSeller;
     address private _rateSetter;
+    address private _whitelistAdmin;
+
+    bool private _KYC = false;
 
     event Bonus(address indexed purchaser, address indexed beneficiary, uint256 value, uint256 amount);
     event ChangeRate(uint256 rate);
@@ -42,6 +46,7 @@ contract KicksCrowdsale is Crowdsale, TimedCrowdsale, AllowanceCrowdsale {
         _rate = rate;
         _manualSeller = manualSeller;
         _rateSetter = rateSetter;
+        _whitelistAdmin = msg.sender;
     }
 
 
@@ -49,6 +54,9 @@ contract KicksCrowdsale is Crowdsale, TimedCrowdsale, AllowanceCrowdsale {
      * Base crowdsale override
      */
     function _preValidatePurchase(address beneficiary, uint256 weiAmount) internal view {
+        if (_KYC) {
+            require(isWhitelisted(beneficiary), 'Only whitelisted');
+        }
         uint256 kickAmount = weiAmount.mul(_rate);
         require(kickAmount >= _kickMinPay, 'Min purchase 100 kick');
         require(_kickPurchased.add(kickAmount) <= _kickCap, 'Cap has been reached');
@@ -67,16 +75,17 @@ contract KicksCrowdsale is Crowdsale, TimedCrowdsale, AllowanceCrowdsale {
 
     function _getTokenAmount(uint256 weiAmount) internal view returns (uint256) {
         uint256 tokenAmount = weiAmount.mul(_rate);
-        return weiAmount.mul(_rate).add(calcBonus(tokenAmount));
+        return tokenAmount.add(calcBonus(tokenAmount));
     }
 
     function _updatePurchasingState(address beneficiary, uint256 weiAmount) internal {
-        uint256 tokenAmount = _getTokenAmount(weiAmount);
-        _kickPurchased = _kickPurchased.add(tokenAmount);
+        uint256 tokenAmount = weiAmount.mul(_rate);
         uint256 bonus = calcBonus(tokenAmount);
         if (bonus != 0) {
             emit Bonus(msg.sender, beneficiary, weiAmount, bonus);
+            tokenAmount = tokenAmount.add(bonus);
         }
+        _kickPurchased = _kickPurchased.add(tokenAmount);
     }
 
 
@@ -101,6 +110,21 @@ contract KicksCrowdsale is Crowdsale, TimedCrowdsale, AllowanceCrowdsale {
         require(msg.sender == _rateSetter);
         _rate = rate;
         emit ChangeRate(rate);
+    }
+
+    /**
+     * Change KYC status
+     */
+    function onKYC() public {
+        require(msg.sender == _whitelistAdmin);
+        require(!_KYC);
+        _KYC = true;
+    }
+
+    function offKYC() public {
+        require(msg.sender == _whitelistAdmin);
+        require(_KYC);
+        _KYC = false;
     }
 
 
@@ -129,5 +153,9 @@ contract KicksCrowdsale is Crowdsale, TimedCrowdsale, AllowanceCrowdsale {
 
     function bonus10capBoundary() public view returns (uint256) {
         return _bonus10capBoundary;
+    }
+
+    function KYC() public view returns (bool) {
+        return _KYC;
     }
 }
