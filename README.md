@@ -1,3 +1,3 @@
-# Sessia Crowdfunding Contract
+Sessia IEO Contract
 
 https://sessia.com/blockchain.html
